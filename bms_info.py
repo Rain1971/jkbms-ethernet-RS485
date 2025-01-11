@@ -21,6 +21,8 @@ RECORD_TYPE_SETTINGS = 0x01
 RECORD_TYPE_DATA = 0x02
 RECORD_TYPE_INFO = 0x03
 
+trama_bateria = -1
+
 def load_config(config_file='config.json'):
     """Carga la configuración JSON (ip, port, frame_header...)."""
     with open(config_file, 'r', encoding='utf-8') as f:
@@ -81,12 +83,14 @@ def get_16bit_le(frame, offset):
 def get_32bit_le(frame, offset):
     return frame[offset] | (frame[offset + 1] << 8) | (frame[offset + 2] << 16) | (frame[offset + 3] << 24)
 
-def parse_data_frame(frame: bytes, logger):
+def parse_data_frame(frame: bytes, logger, frame_counter):
     """
     frame_type=0x02 => celdas, temps, voltaje total, potencias, alarmas, resistencias, etc.
     Ajustado para 24 celdas.
     Los offsets y cálculos se basan en la función C++ proporcionada.
     """
+    global trama_bateria
+    
     try:
         # 1. Celdas (24 celdas, 2 bytes cada una, little endian)
         cell_count = 24
@@ -147,8 +151,17 @@ def parse_data_frame(frame: bytes, logger):
         offset_alarms = offset_resistances + cell_count * 2
         system_alarms = frame[offset_alarms]
 
-        # 10. Battery Address (asumiendo que está en el byte 270)
-        battery_address = frame[270] if len(frame) > 270 else None
+        # 10. Battery Address ( va por orden de direccion el mensaje en la linea )
+        if trama_bateria == -1:
+            if frame_counter == 0:
+                trama_bateria = 0
+        else:
+            if frame_counter == 0:
+                trama_bateria = 0
+            else:
+                trama_bateria += 1
+        
+        battery_address = trama_bateria
 
         data = {
             "battery_address": battery_address,
@@ -363,7 +376,7 @@ def analyze_frame(frame: bytes, logger):
     logger.info(f"Record type=0x{record_type:02X}, frame_counter={frame_counter}")
 
     if record_type == RECORD_TYPE_DATA:  # 0x02
-        data = parse_data_frame(frame, logger)
+        data = parse_data_frame(frame, logger, frame_counter)
         if data:
             # Extraer e imprimir
             battery_address = data["battery_address"]
@@ -523,7 +536,7 @@ def main():
                 chunk = b''
 
             if chunk:
-                logger.debug(f"Bytes recibidos (hex): {binascii.hexlify(chunk).decode('ascii')}")
+                #logger.debug(f"Bytes recibidos (hex): {binascii.hexlify(chunk).decode('ascii')}")
                 i = 0
                 while i < len(chunk):
                     # Detectar cabecera => flush
