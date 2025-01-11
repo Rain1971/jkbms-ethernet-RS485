@@ -1,0 +1,14 @@
+{
+    "communication": {
+        "frame_header": "55AAEB90",
+        "ip": "10.48.130.149",
+        "port": 8899,
+        "baudrate": 115200,
+        "timeout": 1,
+        "read_size": 512
+    },
+    "logging": {
+        "filename": "captura.log",
+        "level": "DEBUG"
+    }
+}
