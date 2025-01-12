@@ -10,7 +10,7 @@ import json
 from typing import Optional, Dict, List
 
 class JKBattery:
-    def __init__(self, address: int, debug: bool = True):
+    def __init__(self, address: int, debug: bool = False):
         self.address = address
         self.debug = debug
         
@@ -40,6 +40,7 @@ class JKBattery:
         self.cell_request_float_voltage: float = 0.0   # RFV
         self.power_off_voltage: float = 0.0
         self.max_charge_current: float = 0.0
+        self.charging_cicles: float = 0.0
         self.charge_ocp_delay: int = 0         # Over Current Protection delay
         self.charge_ocp_recovery_time: int = 0
         self.max_discharge_current: float = 0.0
@@ -84,9 +85,13 @@ class JKBattery:
         self.cell_voltages = data["cell_voltages"]
         self.temp1 = data["temp1"]
         self.temp2 = data["temp2"]
+        self.temp4 = data["temp4"]
+        self.temp5 = data["temp5"]
+        self.tempMosFET = data["tempMosFET"]
         self.total_voltage = data["total_voltage_sensor"]
         self.current = data["current_sensor"]
         self.power = data["power_sensor"]
+        self.charging_cicles = data["charging_cicles"]
         self.charging_power = data["charging_power_sensor"]
         self.discharging_power = data["discharging_power_sensor"]
         self.internal_resistances = data["internal_resistances"]
@@ -200,12 +205,17 @@ class JKBattery:
             "Cell Voltages": self.cell_voltages,
             "Temperature 1": self.temp1,
             "Temperature 2": self.temp2,
+            "Temperature 4": self.temp4,
+            "Temperature 5": self.temp5,
+            "Temperature MosFET": self.tempMosFET,
             "Total Voltage": self.total_voltage,
             "Current": self.current,
             "Power": self.power,
+            "charging_cicles": self.charging_cicles,
             "Charging Power": self.charging_power,
             "Discharging Power": self.discharging_power,
             "Internal Resistances": self.internal_resistances,
+            "charging_cicles": self.charging_cicles,
             "System Alarms": self.system_alarms,
             "Min Cell Voltage": self.min_cell_voltage,
             "Max Cell Voltage": self.max_cell_voltage,
@@ -238,12 +248,13 @@ class JKBattery:
 
 
 class BatteryMonitor:
-    def __init__(self, config_file: str = 'config.json'):
+    def __init__(self, config_file: str = 'config.json', debug: bool = False):
         self.config = self._load_config(config_file)
         self.logger = self._config_logger()
         self.batteries: Dict[int, JKBattery] = {}
         self.frame_buffer = bytearray()
         self.trama_bateria = -1
+        self.debug = debug
         
     def _load_config(self, config_file: str) -> Dict:
         """Load configuration from JSON file"""
@@ -346,48 +357,65 @@ class BatteryMonitor:
             cell_available = 16
             offset_cells = 6
             cell_voltages = []
+            tmp_offset = 0
             for i in range(cell_count):
-                raw_mv = self.get_16bit_le(frame, offset_cells + i * 2)
+                tmp_offset = offset_cells + i * 2
+                raw_mv = self.get_16bit_le(frame, tmp_offset)
                 cell_voltages.append(raw_mv / 1000.0)  # Convertir de mV a V
                 if i >= cell_available-1:
                     break
 
             # 2. Temperaturas (2 sensores, 2 bytes cada uno, little endian)
-            offset_temps = offset_cells + cell_count * 2
-            temp1_raw = self.get_16bit_le(frame, offset_temps)
-            temp2_raw = self.get_16bit_le(frame, offset_temps + 2)
+            # Ajuste de offsets de temperatura
+            offset_temp1 = 162
+            offset_temp2 = 164
+            offset_temp4 = 256
+            offset_temp5 = 258
+            offset_temp_mosfet = 144
+
+            # Leer las temperaturas
+            temp1_raw = self.get_16bit_le(frame, offset_temp1)
+            temp2_raw = self.get_16bit_le(frame, offset_temp2)
+            temp4_raw = self.get_16bit_le(frame, offset_temp4)
+            temp5_raw = self.get_16bit_le(frame, offset_temp5)
+            tempMosFET_raw = self.get_16bit_le(frame, offset_temp_mosfet)
+
             temp1 = temp1_raw / 10.0  # Convertir de decimas de °C a °C
             temp2 = temp2_raw / 10.0
+            temp4 = temp4_raw / 10.0
+            temp5 = temp5_raw / 10.0
+            tempMosFET = tempMosFET_raw / 10.0
 
+            offset_temps = offset_cells + cell_count * 2
             # 3. Total Voltage Sensor (4 bytes, little endian)
-            offset_total_voltage = offset_temps + 4
+            offset_total_voltage = 150
             total_voltage_raw = self.get_32bit_le(frame, offset_total_voltage)
             total_voltage = total_voltage_raw / 1000.0
 
             # 4. Current Sensor (4 bytes, little endian, signed)
-            offset_current = offset_total_voltage + 4
+            offset_current = offset_total_voltage + 8
             current_raw = self.get_32bit_le(frame, offset_current)
             if current_raw >= 0x80000000:
                 current_raw -= 0x100000000
             current_a = current_raw / 1000.0
 
-            # 5. Power Sensor (4 bytes, little endian)
-            offset_power = offset_current + 4
-            power_raw = self.get_32bit_le(frame, offset_power)
-            power_kw = power_raw / 1000.0
+            power_kw = total_voltage * current_a
+            
+            charging_cicles = self.get_32bit_le(frame, 182)
 
             # 6. Charging Power Sensor (4 bytes, little endian)
-            offset_charging_power = offset_power + 4
+            offset_charging_power = offset_current + 16
             charging_power_raw = self.get_32bit_le(frame, offset_charging_power)
             charging_power_kw = charging_power_raw / 1000.0
 
             # 7. Discharging Power Sensor (4 bytes, little endian)
-            offset_discharging_power = offset_charging_power + 4
+            offset_discharging_power = offset_charging_power + 8
             discharging_power_raw = self.get_32bit_le(frame, offset_discharging_power)
             discharging_power_kw = discharging_power_raw / 1000.0
 
             # 8. Resistencias internas (24 celdas, 2 bytes cada una, little endian)
             offset_resistances = offset_discharging_power + 6
+            offset_resistances = 80
             internal_resistances = []
             for i in range(cell_count):
                 resistance_raw = self.get_16bit_le(frame, offset_resistances + i * 2)
@@ -413,7 +441,7 @@ class BatteryMonitor:
             battery_address = self.trama_bateria
             
             # Corrección: Ajuste del offset para state_of_charge
-            offset_soc = 271
+            offset_soc = 173
             if len(frame) > offset_soc:
                 state_of_charge_raw = frame[offset_soc]
                 state_of_charge = state_of_charge_raw
@@ -426,6 +454,9 @@ class BatteryMonitor:
                 "cell_voltages": cell_voltages,
                 "temp1": temp1,
                 "temp2": temp2,
+                "temp4": temp4,
+                "temp5": temp5,
+                "tempMosFET": tempMosFET,
                 "total_voltage_sensor": total_voltage,
                 "current_sensor": current_a,
                 "power_sensor": power_kw,
@@ -434,6 +465,7 @@ class BatteryMonitor:
                 "internal_resistances": internal_resistances,
                 "system_alarms": system_alarms,
                 "state_of_charge": state_of_charge,
+                "charging_cicles": charging_cicles
             }
 
             return data
@@ -657,8 +689,9 @@ class BatteryMonitor:
         frame_counter = frame[5]
         
         hex_frame = binascii.hexlify(frame).decode('ascii')
-        self.logger.info(f"\nTrama BLE (300 bytes): {hex_frame}")
-        self.logger.info(f"Record type=0x{record_type:02X}, frame_counter={frame_counter}")
+        if self.debug:
+            self.logger.info(f"\nTrama BLE (300 bytes): {hex_frame}")
+            self.logger.info(f"Record type=0x{record_type:02X}, frame_counter={frame_counter}")
         
         # Import parsing functions from original code
         if record_type == 0x02:  # Data frame
