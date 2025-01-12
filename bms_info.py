@@ -8,6 +8,8 @@ import sys
 import logging
 import json
 from typing import Optional, Dict, List
+from influxdb import InfluxDBClient
+
 
 class JKBattery:
     def __init__(self, address: int, debug: bool = False):
@@ -246,6 +248,64 @@ class JKBattery:
             logger.info(f"{key}: {value}")
             print(f"{key}: {value}")
 
+    def to_influx_points(self) -> List[Dict]:
+        timestamp = int(time.time() * 1000000000)  # Nanosecond precision
+        points = []
+        # Status measurement
+        status_point = {
+            "measurement": f"jk.batteries.{self.address}.status",
+            "time": timestamp,
+            "fields": {
+                "state_of_charge": float(self.state_of_charge),
+                "cell_voltages": ",".join(map(str, self.cell_voltages)),
+                "temp1": float(self.temp1),
+                "temp2": float(self.temp2),
+                "temp4": float(self.temp4),
+                "temp5": float(self.temp5),
+                "temp_mosfet": float(self.tempMosFET),
+                "total_voltage": float(self.total_voltage),
+                "current": float(self.current),
+                "power": float(self.power),
+                "charging_cycles": float(self.charging_power),
+                "charging_power": float(self.charging_power),
+                "discharging_power": float(self.discharging_power),
+                "internal_resistances": ",".join(map(str, self.internal_resistances)),
+                "system_alarms": float(self.system_alarms),
+                "min_cell_voltage": float(self.min_cell_voltage),
+                "max_cell_voltage": float(self.max_cell_voltage),
+                "avg_cell_voltage": float(self.avg_cell_voltage),
+                "delta_cell_voltage": float(self.delta_cell_voltage)
+            }
+        }
+        points.append(status_point)
+        # Setup measurement
+        setup_point = {
+            "measurement": f"jk.batteries.{self.address}.setup",
+            "time": timestamp,
+            "fields": {
+                "smart_sleep_voltage": float(self.smart_sleep_voltage),
+                "cell_uvp": float(self.cell_uvp),
+                "cell_uvpr": float(self.cell_uvpr),
+                "cell_ovp": float(self.cell_ovp),
+                "cell_ovpr": float(self.cell_ovpr),
+                "balance_trigger_voltage": float(self.balance_trigger_voltage),
+                "soc_100_voltage": float(self.soc_100_voltage),
+                "soc_0_voltage": float(self.soc_0_voltage),
+                "rcv": float(self.cell_request_charge_voltage),
+                "rfv": float(self.cell_request_float_voltage),
+                "power_off_voltage": float(self.power_off_voltage),
+                "max_charge_current": float(self.max_charge_current),
+                "max_discharge_current": float(self.max_discharge_current),
+                "cell_count": float(self.cell_count),
+                "nominal_battery_capacity": float(self.nominal_battery_capacity),
+                "vendor": str(self.vendor),
+                "hardware_version": str(self.hardware_version),
+                "software_version": str(self.software_version),
+                "uptime": float(self.uptime)
+            }
+        }
+        points.append(setup_point)
+        return points
 
 class BatteryMonitor:
     def __init__(self, config_file: str = 'config.json', debug: bool = False):
@@ -255,6 +315,63 @@ class BatteryMonitor:
         self.frame_buffer = bytearray()
         self.trama_bateria = -1
         self.debug = debug
+        self.type2_frame_count = 0
+        self.influx_client = None
+        self.write_api = None
+        self.influx_config = self._load_influx_config()
+        self.influx_client = InfluxDBClient(
+            host=self.influx_config['host'],
+            port=self.influx_config['port'],
+            username=self.influx_config['username'],
+            password=self.influx_config['password'],
+            database=self.influx_config['database']
+        )
+
+    def __del__(self):
+        if isinstance(self.influx_client, InfluxDBClient):
+            self.influx_client.close()
+
+    def _load_influx_config(self) -> Dict:
+        """Load InfluxDB configuration from secret.json"""
+        try:
+            with open('secret.json', 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            self.logger.error("secret.json not found. Please create it with InfluxDB configuration.")
+            sys.exit(1)
+            
+    def _init_influx_client(self):
+        """Initialize InfluxDB client"""
+        try:
+            # Change to use InfluxDBClient with username/password auth
+            self.influx_client = InfluxDBClient(
+                host=self.influx_config['url'].split('://')[1].split(':')[0],
+                port=8086,
+                username=self.influx_config['username'],
+                password=self.influx_config['password'],
+                database=self.influx_config['database']
+            )
+            # Test connection
+            self.influx_client.ping()
+            self.logger.info("InfluxDB client initialized successfully")
+        except Exception as e:
+            self.logger.error(f"Failed to initialize InfluxDB client: {e}")
+            sys.exit(1)
+        
+    def _write_to_influx(self, battery: JKBattery):
+        """Write battery data to InfluxDB"""
+        try:
+            if not self.influx_client:
+                self._init_influx_client()
+                
+            points = battery.to_influx_points()
+            self.influx_client.write_points(
+                points,
+                time_precision='n'  # nanosecond precision
+            )
+            self.logger.debug(f"Data written to InfluxDB for battery {battery.address}")
+        except Exception as e:
+            self.logger.error(f"Failed to write to InfluxDB: {e}")
         
     def _load_config(self, config_file: str) -> Dict:
         """Load configuration from JSON file"""
@@ -701,6 +818,11 @@ class BatteryMonitor:
                 battery.update_from_data_frame(data)
                 battery.print_status(self.logger)
                 
+                if self.type2_frame_count >= 8:
+                    self._write_to_influx(battery)
+                else:
+                    self.type2_frame_count += 1
+                
         elif record_type == 0x01:  # Settings frame
             data = self.parse_settings_frame(frame, self.logger)
             if data:
@@ -713,8 +835,7 @@ class BatteryMonitor:
                 # For info frame, we'll assume it's for battery 0 if we can't determine
                 battery = self._get_or_create_battery(0)
                 battery.update_from_info_frame(data)
-
-                
+        
 def main():
     monitor = BatteryMonitor()
     monitor.run()
