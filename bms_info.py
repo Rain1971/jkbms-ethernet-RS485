@@ -369,7 +369,7 @@ class BatteryMonitor:
                 points,
                 time_precision='n'  # nanosecond precision
             )
-            self.logger.debug(f"Data written to InfluxDB for battery {battery.address}")
+            #self.logger.debug(f"Data written to InfluxDB for battery {battery.address}")
         except Exception as e:
             self.logger.error(f"Failed to write to InfluxDB: {e}")
         
@@ -816,7 +816,7 @@ class BatteryMonitor:
             if data:
                 battery = self._get_or_create_battery(data["battery_address"])
                 battery.update_from_data_frame(data)
-                battery.print_status(self.logger)
+                #battery.print_status(self.logger)
                 
                 if self.type2_frame_count >= 8:
                     self._write_to_influx(battery)
