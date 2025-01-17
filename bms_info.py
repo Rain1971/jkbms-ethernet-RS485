@@ -251,60 +251,75 @@ class JKBattery:
     def to_influx_points(self) -> List[Dict]:
         timestamp = int(time.time() * 1000000000)  # Nanosecond precision
         points = []
-        # Status measurement
+        
+        # Prepara el diccionario de campos para el "status"
+        status_fields = {
+            "state_of_charge": float(self.state_of_charge),
+            "temp1": float(self.temp1),
+            "temp2": float(self.temp2),
+            "temp4": float(self.temp4),
+            "temp5": float(self.temp5),
+            "temp_mosfet": float(self.tempMosFET),
+            "total_voltage": float(self.total_voltage),
+            "current": float(self.current),
+            "power": float(self.power),
+            "charging_cycles": float(self.charging_power),  # <-- verifica si en realidad querías "charging_cycles" = "charging_power"
+            "charging_power": float(self.charging_power),
+            "discharging_power": float(self.discharging_power),
+            "system_alarms": float(self.system_alarms),
+            "min_cell_voltage": float(self.min_cell_voltage),
+            "max_cell_voltage": float(self.max_cell_voltage),
+            "avg_cell_voltage": float(self.avg_cell_voltage),
+            "delta_cell_voltage": float(self.delta_cell_voltage),
+        }
+        
+        # Agrega cada celda como un campo diferente: cell_voltage_1, cell_voltage_2, ...
+        for i, voltage in enumerate(self.cell_voltages, start=1):
+            status_fields[f"cell_voltage_{i}"] = float(voltage)
+
+        # Agrega cada resistencia interna como un campo diferente: internal_resistance_1, ...
+        for i, resistance in enumerate(self.internal_resistances, start=1):
+            status_fields[f"internal_resistance_{i}"] = float(resistance)
+
+        # Crea el punto de "status"
         status_point = {
             "measurement": f"jk.batteries.{self.address}.status",
             "time": timestamp,
-            "fields": {
-                "state_of_charge": float(self.state_of_charge),
-                "cell_voltages": ",".join(map(str, self.cell_voltages)),
-                "temp1": float(self.temp1),
-                "temp2": float(self.temp2),
-                "temp4": float(self.temp4),
-                "temp5": float(self.temp5),
-                "temp_mosfet": float(self.tempMosFET),
-                "total_voltage": float(self.total_voltage),
-                "current": float(self.current),
-                "power": float(self.power),
-                "charging_cycles": float(self.charging_power),
-                "charging_power": float(self.charging_power),
-                "discharging_power": float(self.discharging_power),
-                "internal_resistances": ",".join(map(str, self.internal_resistances)),
-                "system_alarms": float(self.system_alarms),
-                "min_cell_voltage": float(self.min_cell_voltage),
-                "max_cell_voltage": float(self.max_cell_voltage),
-                "avg_cell_voltage": float(self.avg_cell_voltage),
-                "delta_cell_voltage": float(self.delta_cell_voltage)
-            }
+            "fields": status_fields
         }
         points.append(status_point)
-        # Setup measurement
+
+        # Prepara el diccionario de campos para el "setup"
+        setup_fields = {
+            "smart_sleep_voltage": float(self.smart_sleep_voltage),
+            "cell_uvp": float(self.cell_uvp),
+            "cell_uvpr": float(self.cell_uvpr),
+            "cell_ovp": float(self.cell_ovp),
+            "cell_ovpr": float(self.cell_ovpr),
+            "balance_trigger_voltage": float(self.balance_trigger_voltage),
+            "soc_100_voltage": float(self.soc_100_voltage),
+            "soc_0_voltage": float(self.soc_0_voltage),
+            "rcv": float(self.cell_request_charge_voltage),
+            "rfv": float(self.cell_request_float_voltage),
+            "power_off_voltage": float(self.power_off_voltage),
+            "max_charge_current": float(self.max_charge_current),
+            "max_discharge_current": float(self.max_discharge_current),
+            "cell_count": float(self.cell_count),
+            "nominal_battery_capacity": float(self.nominal_battery_capacity),
+            "vendor": str(self.vendor),
+            "hardware_version": str(self.hardware_version),
+            "software_version": str(self.software_version),
+            "uptime": float(self.uptime)
+        }
+
+        # Crea el punto de "setup"
         setup_point = {
             "measurement": f"jk.batteries.{self.address}.setup",
             "time": timestamp,
-            "fields": {
-                "smart_sleep_voltage": float(self.smart_sleep_voltage),
-                "cell_uvp": float(self.cell_uvp),
-                "cell_uvpr": float(self.cell_uvpr),
-                "cell_ovp": float(self.cell_ovp),
-                "cell_ovpr": float(self.cell_ovpr),
-                "balance_trigger_voltage": float(self.balance_trigger_voltage),
-                "soc_100_voltage": float(self.soc_100_voltage),
-                "soc_0_voltage": float(self.soc_0_voltage),
-                "rcv": float(self.cell_request_charge_voltage),
-                "rfv": float(self.cell_request_float_voltage),
-                "power_off_voltage": float(self.power_off_voltage),
-                "max_charge_current": float(self.max_charge_current),
-                "max_discharge_current": float(self.max_discharge_current),
-                "cell_count": float(self.cell_count),
-                "nominal_battery_capacity": float(self.nominal_battery_capacity),
-                "vendor": str(self.vendor),
-                "hardware_version": str(self.hardware_version),
-                "software_version": str(self.software_version),
-                "uptime": float(self.uptime)
-            }
+            "fields": setup_fields
         }
         points.append(setup_point)
+
         return points
 
 class BatteryMonitor:
