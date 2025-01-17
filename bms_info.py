@@ -775,12 +775,7 @@ class BatteryMonitor:
         data['uptime_s'] = self.get_32bit_le(frame, 25)
 
         return data
-            
-            
-            
-            
-            
-            
+
     def _process_chunk(self, chunk: bytes):
         """Process received data chunk"""
         frame_header = self.config['communication']['frame_header']
