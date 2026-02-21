@@ -744,7 +744,53 @@ class BatteryMonitor:
         # 40. Data Field Enable Control 0 (1 byte at 287)
         data['data_field_enable_control_0'] = frame[287]
 
-        # Puedes añadir más campos si es necesario, siguiendo el patrón
+        # Si el numero de bateria es > -1 logueo los datos capturados en esta función
+        if data["device_address"] >= 0 and False:
+            logger.info(f"\n\n=== Ajustes BMS (Batería Número: {data['device_address']}) ===")
+            # solo logueo los datos de la bateria que se han capturado en esta función
+            logger.info(f"Smart Sleep Voltage: {data['smart_sleep_voltage']} V")
+            logger.info(f"Cell UVP: {data['cell_uvp']} V")
+            logger.info(f"Cell UVPR: {data['cell_uvpr']} V")
+            logger.info(f"Cell OVP: {data['cell_ovp']} V")
+            logger.info(f"Cell OVPR: {data['cell_ovpr']} V")
+            logger.info(f"Balance Trigger Voltage: {data['balance_trigger_voltage']} V")
+            logger.info(f"SOC 100% Voltage: {data['soc_100_voltage']} V")
+            logger.info(f"SOC 0% Voltage: {data['soc_0_voltage']} V")
+            logger.info(f"RCV: {data['voltage_cell_request_charge_voltage']} V")
+            logger.info(f"RFV: {data['voltage_cell_request_float_voltage']} V")
+            logger.info(f"Power Off Voltage: {data['power_off_voltage']} V")
+            logger.info(f"Max Charge Current: {data['max_charge_current']} A")
+            logger.info(f"Charge OCP Delay: {data['charge_ocp_delay']} s")
+            logger.info(f"Charge OCP Recovery Time: {data['charge_ocp_recovery_time']} s")
+            logger.info(f"Max Discharge Current: {data['max_discharge_current']} A")
+            logger.info(f"Discharge OCP Delay: {data['discharge_ocp_delay']} s")
+            logger.info(f"Discharge OCP Recovery Time: {data['discharge_ocp_recovery_time']} s")
+            logger.info(f"Short Circuit Protection Recovery Time: {data['short_circuit_protection_recovery_time']} s")
+            logger.info(f"Max Balance Current: {data['max_balance_current']} A")
+            logger.info(f"Charge OTP: {data['charge_otp']} °C")
+            logger.info(f"Charge OTP Recovery: {data['charge_otp_recovery']} °C")
+            logger.info(f"Discharge OTP: {data['discharge_otp']} °C")
+            logger.info(f"Discharge OTP Recovery: {data['discharge_otp_recovery']} °C")
+            logger.info(f"Charge UTP: {data['charge_utp']} °C")
+            logger.info(f"Charge UTP Recovery: {data['charge_utp_recovery']} °C")
+            logger.info(f"MOS OTP: {data['mos_otp']} °C")
+            logger.info(f"MOS OTP Recovery: {data['mos_otp_recovery']} °C")
+            logger.info(f"Cell Count: {data['cell_count']}")
+            logger.info(f"Charge Switch: {data['charge_switch']}")
+            logger.info(f"Discharge Switch: {data['discharge_switch']}")
+            logger.info(f"Balancer Switch: {data['balancer_switch']}")
+            logger.info(f"Nominal Battery Capacity: {data['nominal_battery_capacity']} Ah")
+            logger.info(f"SCP Delay: {data['scp_delay']} us")
+            logger.info(f"Start Balance Voltage: {data['start_balance_voltage']} V")
+            logger.info(f"Con Wire Resistances: {data['con_wire_resistances']} Ohms")
+            logger.info(f"Device Address: {data['device_address']}")
+            logger.info(f"Precharge Time: {data['precharge_time']} s")
+            logger.info(f"Bitmask Controls: {data['bitmask_controls']}")
+            logger.info(f"Smart Sleep: {data['smart_sleep']} h")
+            logger.info(f"Data Field Enable Control 0: {data['data_field_enable_control_0']}")
+            
+        
+             
 
         return data
 
