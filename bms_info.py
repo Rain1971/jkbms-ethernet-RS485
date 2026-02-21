@@ -374,19 +374,26 @@ class BatteryMonitor:
             sys.exit(1)
         
     def _write_to_influx(self, battery: JKBattery):
-        """Write battery data to InfluxDB"""
-        try:
-            if not self.influx_client:
-                self._init_influx_client()
-                
-            points = battery.to_influx_points()
-            self.influx_client.write_points(
-                points,
-                time_precision='n'  # nanosecond precision
-            )
-            #self.logger.debug(f"Data written to InfluxDB for battery {battery.address}")
-        except Exception as e:
-            self.logger.error(f"Failed to write to InfluxDB: {e}")
+        """Write battery data to InfluxDB with reconnection on failure"""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                if not self.influx_client:
+                    self._reconnect_influx()
+
+                points = battery.to_influx_points()
+                self.influx_client.write_points(
+                    points,
+                    time_precision='n'  # nanosecond precision
+                )
+                return  # Success
+            except Exception as e:
+                self.logger.error(f"Error escribiendo a InfluxDB (intento {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    self._reconnect_influx()
+                    time.sleep(1)
+                else:
+                    self.logger.error("No se pudo escribir a InfluxDB después de varios intentos")
         
     def _load_config(self, config_file: str) -> Dict:
         """Load configuration from JSON file"""
@@ -429,40 +436,107 @@ class BatteryMonitor:
             self.batteries[address] = JKBattery(address)
         return self.batteries[address]
         
-    def run(self):
-        """Main monitoring loop"""
-        self.logger.info("INICIANDO CAPTURA (JK-BMS BLE por socket)")
-        
-        # Create socket connection
-        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(self.config['communication']['timeout'])
-        
-        try:
-            ip = self.config['communication']['ip']
-            port = self.config['communication']['port']
-            self.logger.info(f"Conectando a {ip}:{port}")
-            s.connect((ip, port))
-            self.logger.info("Conectado.")
-            
-            # Main loop
-            while True:
+    def _connect_with_retry(self, ip: str, port: int, max_retries: int = -1) -> socket.socket:
+        """
+        Connect to BMS with exponential backoff retry.
+        max_retries=-1 means infinite retries.
+        """
+        retry_count = 0
+        base_delay = 5  # Start with 5 seconds
+        max_delay = 300  # Max 5 minutes between retries
+
+        while max_retries == -1 or retry_count < max_retries:
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(self.config['communication']['timeout'])
+                self.logger.info(f"Conectando a {ip}:{port}...")
+                s.connect((ip, port))
+                self.logger.info("Conectado exitosamente.")
+                return s
+            except (socket.timeout, socket.error, OSError) as e:
+                retry_count += 1
+                delay = min(base_delay * (2 ** min(retry_count - 1, 6)), max_delay)
+                self.logger.warning(f"Error de conexión: {e}. Reintentando en {delay} segundos... (intento {retry_count})")
                 try:
-                    chunk = s.recv(self.config['communication']['read_size'])
-                except socket.timeout:
-                    chunk = b''
-                    
-                if chunk:
-                    self._process_chunk(chunk)
-                else:
-                    time.sleep(0.1)
-                    
-        except KeyboardInterrupt:
-            self.logger.info("CAPTURA DETENIDA POR USUARIO")
+                    s.close()
+                except:
+                    pass
+                time.sleep(delay)
+
+        raise ConnectionError(f"No se pudo conectar después de {max_retries} intentos")
+
+    def _reconnect_influx(self):
+        """Reconnect to InfluxDB"""
+        try:
+            if self.influx_client:
+                try:
+                    self.influx_client.close()
+                except:
+                    pass
+            self.influx_client = InfluxDBClient(
+                host=self.influx_config['host'],
+                port=self.influx_config['port'],
+                username=self.influx_config['username'],
+                password=self.influx_config['password'],
+                database=self.influx_config['database']
+            )
+            self.logger.info("Reconectado a InfluxDB exitosamente.")
         except Exception as e:
-            self.logger.error(f"Error durante la captura: {e}", exc_info=True)
-        finally:
-            s.close()
-            self.logger.info("Socket cerrado.")
+            self.logger.error(f"Error reconectando a InfluxDB: {e}")
+
+    def run(self):
+        """Main monitoring loop with automatic reconnection"""
+        self.logger.info("INICIANDO CAPTURA (JK-BMS BLE por socket)")
+
+        ip = self.config['communication']['ip']
+        port = self.config['communication']['port']
+
+        while True:
+            s = None
+            try:
+                # Connect with retry logic
+                s = self._connect_with_retry(ip, port)
+
+                # Reset frame buffer on new connection
+                self.frame_buffer.clear()
+                self.type2_frame_count = 0
+
+                # Main loop
+                consecutive_empty = 0
+                while True:
+                    try:
+                        chunk = s.recv(self.config['communication']['read_size'])
+                    except socket.timeout:
+                        chunk = b''
+
+                    if chunk:
+                        consecutive_empty = 0
+                        self._process_chunk(chunk)
+                    else:
+                        consecutive_empty += 1
+                        # If we get too many empty reads, connection might be dead
+                        if consecutive_empty > 100:
+                            self.logger.warning("Demasiadas lecturas vacías, reconectando...")
+                            break
+                        time.sleep(0.1)
+
+            except KeyboardInterrupt:
+                self.logger.info("CAPTURA DETENIDA POR USUARIO")
+                break
+            except (socket.error, OSError, ConnectionError) as e:
+                self.logger.error(f"Error de conexión: {e}. Reconectando...")
+                # Will reconnect on next iteration
+            except Exception as e:
+                self.logger.error(f"Error inesperado durante la captura: {e}", exc_info=True)
+                # Wait before retrying on unexpected errors
+                time.sleep(10)
+            finally:
+                if s:
+                    try:
+                        s.close()
+                    except:
+                        pass
+                    self.logger.info("Socket cerrado.")
             
             
             
